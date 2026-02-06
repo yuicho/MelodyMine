@@ -1,26 +1,26 @@
 export default [
     {
         "errorType": "serverIsOnline",
-        "errorMessage": "To establish a voice connection, you should first join the Minecraft server (%serverIp%) and after entering, click on the \"Start Melody\" button.",
+        "errorMessage": "VCを接続するには、Discordを確認の上Minecraftサーバー内でコマンドを実行してください。",
     },
     {
         "errorType": "micPermission",
-        "errorMessage": "To establish a voice connection, you must first enable your browser's microphone permission."
+        "errorMessage": "VCを接続するには、まずブラウザのマイク権限を有効にする必要があります。"
     },
     {
         "errorType": "multiUser",
-        "errorMessage": "Currently, you are connected with this account on the website. To to connect this account, you must first disconnect from your current account on the website."
+        "errorMessage": "現在、このアカウントはWebサイト上で接続中です。このアカウントで接続するには、まずWebサイト上で現在の接続を切断してください。"
     },
     {
         "errorType": "playerLeaveServer",
-        "errorMessage": "You have disconnected from the server. To establish a new connection, join the server (%serverIp%) and click on the \"Start Melody\" button again."
+        "errorMessage": "サーバーから切断されました。再度接続の操作を行ってください。"
     },
     {
         "errorType": "pluginDisabled",
-        "errorMessage": "The server you were online on has gone offline. Please try again, and if you encounter any issues, contact us for assistance."
+        "errorMessage": "接続していたサーバーがオフラインになりました。もう一度お試しください。問題が解決しない場合は、お問い合わせください。"
     },
     {
         "errorType": "invalidVerifyCode",
-        "errorMessage": "Authentication failed because your verification code is missing. Please enter the server (%serverIp%) and obtain a new link using the /melodymine start command, or you can enter your username and password on this page."
+        "errorMessage": "認証コードがないため認証に失敗しました。再度接続の操作を行ってください。"
     }
 ]
