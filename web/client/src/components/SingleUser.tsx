@@ -59,9 +59,6 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
         const peer = new RTCPeerConnection({
             iceServers: [
                 ...iceServers,
-                {urls: 'stun:stun2.l.google.com:19302'},
-                {urls: 'turns:freestun.net:5350', username: 'free', credential: 'free'},
-                {urls: 'turn:freestun.net:3479', username: 'free', credential: 'free'},
             ],
             iceCandidatePoolSize: 10,
         })
