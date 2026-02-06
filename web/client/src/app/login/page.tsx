@@ -32,6 +32,7 @@ const Page = async ({searchParams}: { searchParams?: { start?: boolean } }) => {
                     <p className="">
                         Discordに記載のVC参加方法を確認してください。
                     </p>
+                    <LoginForm/>
                 </div>
 
             </div>
