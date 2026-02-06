@@ -30,14 +30,8 @@ const Page = async ({searchParams}: { searchParams?: { start?: boolean } }) => {
                     className="flex-[4] sm:flex-[3] md:flex-[2] lg:flex-[2] px-3 lg:px-10 flex flex-col gap-5 justify-center items-center">
                     <h1 className="font-bold text-xl xl:text-3xl">Welcome</h1>
                     <p className="">
-                        Log into your account or join the Minecraft Server and Register
-                        <span
-                            className="text-transparent bg-clip-text bg-gradient-to-r from-[#221854] to-[#F04FE7] rounded ml-1">
-                            {Settings.serverIp}
-                        </span>
+                        Discordに記載のVC参加方法を確認してください。
                     </p>
-                    <LoginForm/>
-                    <ContactUs/>
                 </div>
 
             </div>
