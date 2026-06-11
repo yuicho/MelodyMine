@@ -54,6 +54,12 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
 
 
     const createPeer = () => {
+        console.debug("[MM][webrtc] createPeer (closing old pc)", {
+            remoteUuid: user.uuid,
+            oldSignalingState: RTCPeer?.signalingState,
+            oldIceState: RTCPeer?.iceConnectionState,
+            oldConnState: RTCPeer?.connectionState,
+        })
         RTCPeer?.close()
         setRTCPeer(undefined)
         const peer = new RTCPeerConnection({
@@ -135,7 +141,11 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
         try {
             await RTCPeer?.setRemoteDescription(data.answer)
         } catch (ex) {
-
+            console.warn("[MM][webrtc] setRemoteDescription failed", {
+                remoteUuid: user.uuid,
+                signalingState: RTCPeer?.signalingState,
+                hasRemoteDescription: !!RTCPeer?.remoteDescription,
+            }, ex)
         }
     }
 
@@ -148,7 +158,13 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
         try {
             await RTCPeer?.addIceCandidate(data.candidate)
         } catch (ex) {
-
+            console.warn("[MM][webrtc] addIceCandidate failed", {
+                remoteUuid: user.uuid,
+                signalingState: RTCPeer?.signalingState,
+                hasRemoteDescription: !!RTCPeer?.remoteDescription,
+                mid: data.candidate?.sdpMid,
+                mline: data.candidate?.sdpMLineIndex,
+            }, ex)
         }
     }
 
