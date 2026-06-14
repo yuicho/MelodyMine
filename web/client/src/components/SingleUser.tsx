@@ -43,6 +43,7 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
     const [enableVoice, setEnableVoice] = useState<boolean>(false)
     const [RTCPeer, setRTCPeer] = useState<RTCPeerConnection | undefined>()
     const RTCPeerRef = useRef<RTCPeerConnection | undefined>(undefined)
+    const pendingCandidatesRef = useRef<(RTCIceCandidate | RTCIceCandidateInit)[]>([])
     const [showUserStatus, setShowUserStatus] = useState<boolean>(false)
 
     const audioRef = useRef<HTMLAudioElement>(null)
@@ -53,6 +54,44 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
         setEndCallSound(soundList.find(sound => sound.name == "hangUp")?.howl)
     }, [soundList])
 
+    const flushPendingCandidates = async (peer: RTCPeerConnection) => {
+      if (RTCPeerRef.current !== peer || peer.signalingState === "closed") {
+        console.debug("[MM][webrtc] skip flush candidates: old or closed pc", {
+          remoteUuid: user.uuid,
+          signalingState: peer.signalingState,
+        })
+        return
+      }
+    
+      if (!peer.remoteDescription) {
+        console.debug("[MM][webrtc] skip flush candidates: no remoteDescription", {
+          remoteUuid: user.uuid,
+          signalingState: peer.signalingState,
+        })
+        return
+      }
+    
+      const candidates = pendingCandidatesRef.current
+      pendingCandidatesRef.current = []
+    
+      console.debug("[MM][webrtc] flush queued candidates", {
+        remoteUuid: user.uuid,
+        count: candidates.length,
+      })
+    
+      for (const candidate of candidates) {
+        try {
+          await peer.addIceCandidate(candidate)
+        } catch (ex) {
+          console.warn("[MM][webrtc] add queued candidate failed", {
+            remoteUuid: user.uuid,
+            signalingState: peer.signalingState,
+            hasRemoteDescription: !!peer.remoteDescription,
+            candidate,
+          }, ex)
+        }
+      }
+    }
 
     const createPeer = () => {
         const oldPeer = RTCPeerRef.current
@@ -70,6 +109,8 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
         
         RTCPeerRef.current = undefined
         setRTCPeer(undefined)
+
+        pendingCandidatesRef.current = []
         
         const peer = new RTCPeerConnection({
             iceServers: [
@@ -295,6 +336,7 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
         })
     
         await peer.setRemoteDescription(data.answer)
+        await flushPendingCandidates(peer)
       } catch (ex) {
         console.warn("[MM][webrtc] setRemoteDescription failed", {
           remoteUuid: user.uuid,
@@ -320,12 +362,16 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
       }
     
       if (!peer.remoteDescription) {
-        console.debug("[MM][webrtc] drop candidate: no remoteDescription", {
+        pendingCandidatesRef.current.push(data.candidate)
+    
+        console.debug("[MM][webrtc] queue candidate: no remoteDescription", {
           remoteUuid: user.uuid,
           signalingState: peer.signalingState,
+          pendingCount: pendingCandidatesRef.current.length,
           mid: data.candidate?.sdpMid,
           mline: data.candidate?.sdpMLineIndex,
         })
+        
         return
       }
     
@@ -357,6 +403,8 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
     
       RTCPeerRef.current = undefined
       setRTCPeer(undefined)
+
+      pendingCandidatesRef.current = []
     }
 
     const startRTC = async (uuid: string) => {
