@@ -68,6 +68,16 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
             ],
             iceCandidatePoolSize: 10,
         })
+        peer.addEventListener("icecandidateerror", (e: any) => {
+            console.warn("[MM][webrtc] icecandidateerror", {
+                remoteUuid: user.uuid,
+                url: e.url,
+                errorCode: e.errorCode,
+                errorText: e.errorText,
+                address: e.address,
+                port: e.port,
+            });
+        });
         stream?.getTracks().forEach(track => {
             peer.addTrack(track, stream)
         })
