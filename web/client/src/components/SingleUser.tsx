@@ -78,6 +78,48 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
                 port: e.port,
             });
         });
+        peer.addEventListener("iceconnectionstatechange", async () => {
+          console.debug("[MM][webrtc] ice state", {
+            remoteUuid: user.uuid,
+            iceConnectionState: peer.iceConnectionState,
+            connectionState: peer.connectionState,
+            signalingState: peer.signalingState,
+          });
+        
+          if (peer.iceConnectionState === "connected" || peer.iceConnectionState === "completed" || peer.iceConnectionState === "failed") {
+            const stats = await peer.getStats();
+        
+            stats.forEach((report) => {
+              if (report.type === "candidate-pair" && (report.selected || report.nominated)) {
+                console.debug("[MM][webrtc] selected candidate pair", {
+                  remoteUuid: user.uuid,
+                  id: report.id,
+                  state: report.state,
+                  selected: report.selected,
+                  nominated: report.nominated,
+                  localCandidateId: report.localCandidateId,
+                  remoteCandidateId: report.remoteCandidateId,
+                  bytesSent: report.bytesSent,
+                  bytesReceived: report.bytesReceived,
+                });
+              }
+        
+              if (report.type === "local-candidate" || report.type === "remote-candidate") {
+                console.debug("[MM][webrtc] candidate stat", {
+                  remoteUuid: user.uuid,
+                  id: report.id,
+                  type: report.type,
+                  candidateType: report.candidateType,
+                  protocol: report.protocol,
+                  address: report.address,
+                  ip: report.ip,
+                  port: report.port,
+                  relayProtocol: report.relayProtocol,
+                });
+              }
+            });
+          }
+        });
         console.debug("[MM][webrtc] pc config", {
             remoteUuid: user.uuid,
             config: peer.getConfiguration(),
