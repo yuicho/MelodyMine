@@ -42,6 +42,7 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
     const [audioContext, setAudioContext] = useState<AudioContext>()
     const [enableVoice, setEnableVoice] = useState<boolean>(false)
     const [RTCPeer, setRTCPeer] = useState<RTCPeerConnection | undefined>()
+    const RTCPeerRef = useRef<RTCPeerConnection | undefined>(undefined)
     const [showUserStatus, setShowUserStatus] = useState<boolean>(false)
 
     const audioRef = useRef<HTMLAudioElement>(null)
@@ -54,20 +55,38 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
 
 
     const createPeer = () => {
-        console.debug("[MM][webrtc] createPeer (closing old pc)", {
-            remoteUuid: user.uuid,
-            oldSignalingState: RTCPeer?.signalingState,
-            oldIceState: RTCPeer?.iceConnectionState,
-            oldConnState: RTCPeer?.connectionState,
-        })
-        RTCPeer?.close()
+        const oldPeer = RTCPeerRef.current
+        
+        if (oldPeer && oldPeer.signalingState !== "closed") {
+            console.debug("[MM][webrtc] createPeer (closing old pc)", {
+              remoteUuid: user.uuid,
+              oldSignalingState: oldPeer.signalingState,
+              oldIceState: oldPeer.iceConnectionState,
+              oldConnState: oldPeer.connectionState,
+            })
+        
+            oldPeer.close()
+        }
+        
+        RTCPeerRef.current = undefined
         setRTCPeer(undefined)
+        
         const peer = new RTCPeerConnection({
             iceServers: [
+                // ここは今の設定をそのまま残す
                 ...iceServers,
             ],
             iceCandidatePoolSize: 10,
         })
+        
+        RTCPeerRef.current = peer
+        setRTCPeer(peer)
+        
+        console.debug("[MM][webrtc] pc config", {
+            remoteUuid: user.uuid,
+            config: peer.getConfiguration(),
+        })
+                
         peer.addEventListener("icecandidateerror", (e: any) => {
             console.warn("[MM][webrtc] icecandidateerror", {
                 remoteUuid: user.uuid,
@@ -120,10 +139,6 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
             });
           }
         });
-        console.debug("[MM][webrtc] pc config", {
-            remoteUuid: user.uuid,
-            config: peer.getConfiguration(),
-        });
         stream?.getTracks().forEach(track => {
             peer.addTrack(track, stream)
         })
@@ -148,26 +163,78 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
                     candidate: e.candidate.candidate,
                 });
             });
-            if (!event.candidate) return
+            if (RTCPeerRef.current !== peer || peer.signalingState === "closed") {
+                console.debug("[MM][webrtc] drop local candidate from old pc", {
+                  remoteUuid: user.uuid,
+                  signalingState: peer.signalingState,
+                })
+                return
+            }
+            
+            if (!event.candidate) {
+                console.debug("[MM][webrtc] local candidate end", {
+                  remoteUuid: user.uuid,
+                })
+                return
+            }
+            
+            console.debug("[MM][webrtc] local candidate", {
+                remoteUuid: user.uuid,
+                type: event.candidate.type,
+                protocol: event.candidate.protocol,
+                address: event.candidate.address,
+                port: event.candidate.port,
+                relatedAddress: event.candidate.relatedAddress,
+                relatedPort: event.candidate.relatedPort,
+            })
+            
             socket?.emit("onCandidate", encrypt({
-                "uuid": user.uuid,
-                "candidate": event.candidate
+                uuid: user.uuid,
+                candidate: event.candidate,
             }))
         }
 
 
         peer.oniceconnectionstatechange = () => {
-            if (peer.iceConnectionState === 'failed') {
-                console.log("Ice Connection Failed! User: ", user.name)
-                peer.restartIce()
-            }
+          if (RTCPeerRef.current !== peer || peer.signalingState === "closed") {
+            console.debug("[MM][webrtc] ignore ice state from old pc", {
+              remoteUuid: user.uuid,
+              iceConnectionState: peer.iceConnectionState,
+              signalingState: peer.signalingState,
+            })
+            return
+          }
+        
+          console.debug("[MM][webrtc] ice state", {
+            remoteUuid: user.uuid,
+            iceConnectionState: peer.iceConnectionState,
+            connectionState: peer.connectionState,
+            signalingState: peer.signalingState,
+          })
+        
+          if (peer.iceConnectionState === "failed") {
+            console.warn("[MM][webrtc] Ice Connection Failed", {
+              remoteUuid: user.uuid,
+              name: user.name,
+            })
+        
+            peer.restartIce()
+          }
         }
-
+        
         peer.ontrack = event => {
-            if (audioRef.current) {
-                audioRef.current.srcObject = event.streams[0]
-                setUserStream(event.streams[0])
-            }
+          if (RTCPeerRef.current !== peer || peer.signalingState === "closed") {
+            console.debug("[MM][webrtc] ignore track from old pc", {
+              remoteUuid: user.uuid,
+              signalingState: peer.signalingState,
+            })
+            return
+          }
+        
+          if (audioRef.current) {
+            audioRef.current.srcObject = event.streams[0]
+            setUserStream(event.streams[0])
+          }
         }
 
         return peer
@@ -206,46 +273,90 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
         if (data.uuid != user.uuid) return
         await createAnswer(data.offer)
     }
-
     const onReceiveAnswer = async (token: string) => {
-        const data = decrypt(token) as {
-            uuid: string
-            answer: RTCSessionDescription
-        }
-        if (data.uuid != user.uuid) return
-        try {
-            await RTCPeer?.setRemoteDescription(data.answer)
-        } catch (ex) {
-            console.warn("[MM][webrtc] setRemoteDescription failed", {
-                remoteUuid: user.uuid,
-                signalingState: RTCPeer?.signalingState,
-                hasRemoteDescription: !!RTCPeer?.remoteDescription,
-            }, ex)
-        }
+      const data = decrypt(token) as { uuid: string, answer: RTCSessionDescription }
+      if (data.uuid != user.uuid) return
+    
+      const peer = RTCPeerRef.current
+    
+      if (!peer || peer.signalingState === "closed") {
+        console.debug("[MM][webrtc] drop answer: no open pc", {
+          remoteUuid: user.uuid,
+          signalingState: peer?.signalingState,
+        })
+        return
+      }
+    
+      try {
+        console.debug("[MM][webrtc] recv answer", {
+          remoteUuid: user.uuid,
+          signalingState: peer.signalingState,
+          hasRemoteDescription: !!peer.remoteDescription,
+        })
+    
+        await peer.setRemoteDescription(data.answer)
+      } catch (ex) {
+        console.warn("[MM][webrtc] setRemoteDescription failed", {
+          remoteUuid: user.uuid,
+          signalingState: peer.signalingState,
+          hasRemoteDescription: !!peer.remoteDescription,
+        }, ex)
+      }
     }
-
     const onReceiveCandidate = async (token: string) => {
-        const data = decrypt(token) as {
-            uuid: string
-            candidate: RTCIceCandidate
-        }
-        if (data.uuid != user.uuid) return
-        try {
-            await RTCPeer?.addIceCandidate(data.candidate)
-        } catch (ex) {
-            console.warn("[MM][webrtc] addIceCandidate failed", {
-                remoteUuid: user.uuid,
-                signalingState: RTCPeer?.signalingState,
-                hasRemoteDescription: !!RTCPeer?.remoteDescription,
-                mid: data.candidate?.sdpMid,
-                mline: data.candidate?.sdpMLineIndex,
-            }, ex)
-        }
+      const data = decrypt(token) as { uuid: string, candidate: RTCIceCandidate }
+      if (data.uuid != user.uuid) return
+    
+      const peer = RTCPeerRef.current
+    
+      if (!peer || peer.signalingState === "closed") {
+        console.debug("[MM][webrtc] drop candidate: no open pc", {
+          remoteUuid: user.uuid,
+          signalingState: peer?.signalingState,
+          mid: data.candidate?.sdpMid,
+          mline: data.candidate?.sdpMLineIndex,
+        })
+        return
+      }
+    
+      if (!peer.remoteDescription) {
+        console.debug("[MM][webrtc] drop candidate: no remoteDescription", {
+          remoteUuid: user.uuid,
+          signalingState: peer.signalingState,
+          mid: data.candidate?.sdpMid,
+          mline: data.candidate?.sdpMLineIndex,
+        })
+        return
+      }
+    
+      try {
+        await peer.addIceCandidate(data.candidate)
+      } catch (ex) {
+        console.warn("[MM][webrtc] addIceCandidate failed", {
+          remoteUuid: user.uuid,
+          signalingState: peer.signalingState,
+          hasRemoteDescription: !!peer.remoteDescription,
+          mid: data.candidate?.sdpMid,
+          mline: data.candidate?.sdpMLineIndex,
+        }, ex)
+      }
     }
-
     const closeRTC = () => {
-        RTCPeer?.close()
-        setRTCPeer(undefined)
+      const peer = RTCPeerRef.current
+    
+      if (peer && peer.signalingState !== "closed") {
+        console.debug("[MM][webrtc] closeRTC", {
+          remoteUuid: user.uuid,
+          signalingState: peer.signalingState,
+          iceConnectionState: peer.iceConnectionState,
+          connectionState: peer.connectionState,
+        })
+    
+        peer.close()
+      }
+    
+      RTCPeerRef.current = undefined
+      setRTCPeer(undefined)
     }
 
     const startRTC = async (uuid: string) => {
