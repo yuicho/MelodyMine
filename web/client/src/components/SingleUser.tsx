@@ -78,11 +78,34 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
                 port: e.port,
             });
         });
+        console.debug("[MM][webrtc] pc config", {
+            remoteUuid: user.uuid,
+            config: peer.getConfiguration(),
+        });
         stream?.getTracks().forEach(track => {
             peer.addTrack(track, stream)
         })
 
         peer.onicecandidate = async event => {
+            peer.addEventListener("icecandidate", (e) => {
+                if (!e.candidate) {
+                    console.debug("[MM][webrtc] local candidate end", {
+                        remoteUuid: user.uuid,
+                    });
+                    return;
+                }
+                
+                console.debug("[MM][webrtc] local candidate", {
+                    remoteUuid: user.uuid,
+                    type: e.candidate.type,
+                    protocol: e.candidate.protocol,
+                    address: e.candidate.address,
+                    port: e.candidate.port,
+                    relatedAddress: e.candidate.relatedAddress,
+                    relatedPort: e.candidate.relatedPort,
+                    candidate: e.candidate.candidate,
+                });
+            });
             if (!event.candidate) return
             socket?.emit("onCandidate", encrypt({
                 "uuid": user.uuid,
