@@ -16,7 +16,7 @@ import {useSoundStore} from "@/store/SoundStore";
 import UserHead from "@/components/UserHead";
 import UserVolumeLine from "@/components/UserVolumeLine";
 import UserStatus from "@/components/UserStatus";
-
+import "@/utils/mmConsoleCapture";
 
 const SingleUser = ({user}: { user: IOnlineUsers }) => {
     const {socket, iceServers} = useSocketStore(state => state)
