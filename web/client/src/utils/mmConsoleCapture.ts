@@ -156,11 +156,19 @@ const installMMConsoleCapture = () => {
 
     URL.revokeObjectURL(url)
   }
-
   window.addEventListener("keydown", (event) => {
-    const key = event.key.toLowerCase()
-
-    if (event.ctrlKey && event.altKey && event.shiftKey && key === "l") {
+    const isL = event.code === "KeyL"
+  
+    const isWindowsShortcut =
+      event.ctrlKey && event.altKey && event.shiftKey && isL
+  
+    const isMacShortcut =
+      event.metaKey && event.altKey && event.shiftKey && isL
+  
+    const isMacControlShortcut =
+      event.ctrlKey && event.altKey && event.shiftKey && isL
+  
+    if (isWindowsShortcut || isMacShortcut || isMacControlShortcut) {
       event.preventDefault()
       window.mmDownloadConsoleLog?.()
     }
