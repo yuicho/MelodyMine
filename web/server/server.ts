@@ -295,6 +295,9 @@ try {
                     io.to(target.socketID).emit("onDisableVoiceReceive", encrypt({
                         uuid: player.uuid,
                     }))
+                    io.to(player.socketID).emit("onDisableVoiceReceive", encrypt({
+                        uuid: player.uuid,
+                    }))
                 })
 
 
