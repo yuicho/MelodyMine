@@ -292,6 +292,12 @@ try {
                 renewData.d?.forEach(item => {
                     const player = renewPlayers.find(player => player.id == renewData.p[item[0]].id)
                     const target = renewPlayers.find(player => player.id == renewData.p[item[1]].id)
+                    console.info("[MM][signal] proximity disable", {
+                        playerUuid: player.uuid,
+                        playerSocketID: player.socketID,
+                        targetUuid: target.uuid,
+                        targetSocketID: target.socketID,
+                    })
                     io.to(target.socketID).emit("onDisableVoiceReceive", encrypt({
                         uuid: player.uuid,
                     }))
