@@ -96,6 +96,10 @@ try {
             })
 
             socket.on("onDisableVoicePlugin", data => {
+                console.info("[MM][signal] onDisableVoicePlugin", {
+                    pluginSocketId: socket.id,
+                    data,
+                })
                 io.to(data.socketID).emit("onDisableVoiceReceive", encrypt({
                     uuid: data.uuid,
                 }))
