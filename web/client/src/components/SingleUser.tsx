@@ -294,9 +294,13 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
 
     const createAnswer = async (offer: RTCSessionDescription) => {
         const peer = createPeer()
+
         await peer.setRemoteDescription(offer)
+        await flushPendingCandidates(peer)
+
         const answer = await peer.createAnswer()
         await peer.setLocalDescription(answer)
+
         setRTCPeer(peer)
 
         socket?.emit("onAnswer", encrypt({
