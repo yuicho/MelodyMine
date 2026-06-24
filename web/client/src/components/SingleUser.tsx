@@ -18,6 +18,15 @@ import UserVolumeLine from "@/components/UserVolumeLine";
 import UserStatus from "@/components/UserStatus";
 import "@/utils/mmConsoleCapture";
 
+type AutoReconnectTrigger =
+  | "ice-disconnected"
+  | "ice-failed"
+  | "connection-failed"
+
+const AUTO_RECONNECT_DELAY_MS = 3000
+const AUTO_RECONNECT_FAILED_DELAY_MS = 500
+const MAX_AUTO_RECONNECT_ATTEMPTS = 2
+
 const SingleUser = ({user}: { user: IOnlineUsers }) => {
     const {socket, iceServers} = useSocketStore(state => state)
     const {uuid, server, serverIsOnline, isActiveVoice} = useUserStore(state => state)
@@ -45,6 +54,10 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
     const RTCPeerRef = useRef<RTCPeerConnection | undefined>(undefined)
     const pendingCandidatesRef = useRef<(RTCIceCandidate | RTCIceCandidateInit)[]>([])
     const [showUserStatus, setShowUserStatus] = useState<boolean>(false)
+    const wasOffererRef = useRef(false)
+    const connectionWantedRef = useRef(false)
+    const reconnectTimerRef = useRef<number | undefined>(undefined)
+    const reconnectAttemptRef = useRef(0)
 
     const audioRef = useRef<HTMLAudioElement>(null)
 
@@ -93,7 +106,146 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
       }
     }
 
+    const clearReconnectTimer = (
+      reason: string,
+      resetAttempts: boolean = false,
+    ) => {
+      if (reconnectTimerRef.current !== undefined) {
+        window.clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = undefined
+    
+        console.debug("[MM][webrtc] auto reconnect cancelled", {
+          remoteUuid: user.uuid,
+          reason,
+        })
+      }
+    
+      if (resetAttempts) {
+        reconnectAttemptRef.current = 0
+      }
+    }
+    
+    const scheduleAutoReconnect = (
+      peer: RTCPeerConnection,
+      trigger: AutoReconnectTrigger,
+    ) => {
+      if (RTCPeerRef.current !== peer || peer.signalingState === "closed") {
+        return
+      }
+    
+      if (!connectionWantedRef.current) {
+        console.debug("[MM][webrtc] auto reconnect skipped: connection not wanted", {
+          remoteUuid: user.uuid,
+          trigger,
+        })
+        return
+      }
+    
+      if (!wasOffererRef.current) {
+        console.debug("[MM][webrtc] auto reconnect waiting for original offerer", {
+          remoteUuid: user.uuid,
+          trigger,
+        })
+        return
+      }
+    
+      if (reconnectTimerRef.current !== undefined) {
+        console.debug("[MM][webrtc] auto reconnect already scheduled", {
+          remoteUuid: user.uuid,
+          trigger,
+        })
+        return
+      }
+    
+      if (reconnectAttemptRef.current >= MAX_AUTO_RECONNECT_ATTEMPTS) {
+        console.warn("[MM][webrtc] auto reconnect gave up", {
+          remoteUuid: user.uuid,
+          trigger,
+          attempts: reconnectAttemptRef.current,
+          maxAttempts: MAX_AUTO_RECONNECT_ATTEMPTS,
+        })
+        return
+      }
+    
+      const delay =
+        trigger === "ice-disconnected"
+          ? AUTO_RECONNECT_DELAY_MS
+          : AUTO_RECONNECT_FAILED_DELAY_MS
+    
+      console.warn("[MM][webrtc] auto reconnect scheduled", {
+        remoteUuid: user.uuid,
+        name: user.name,
+        trigger,
+        delay,
+        nextAttempt: reconnectAttemptRef.current + 1,
+      })
+    
+      reconnectTimerRef.current = window.setTimeout(async () => {
+        reconnectTimerRef.current = undefined
+    
+        if (RTCPeerRef.current !== peer || peer.signalingState === "closed") {
+          console.debug("[MM][webrtc] auto reconnect aborted: peer replaced", {
+            remoteUuid: user.uuid,
+            trigger,
+          })
+          return
+        }
+    
+        if (!connectionWantedRef.current || !wasOffererRef.current) {
+          console.debug("[MM][webrtc] auto reconnect aborted: role changed", {
+            remoteUuid: user.uuid,
+            trigger,
+            connectionWanted: connectionWantedRef.current,
+            wasOfferer: wasOffererRef.current,
+          })
+          return
+        }
+    
+        const state = peer.iceConnectionState
+        const connectionState = peer.connectionState
+    
+        if (
+          state !== "disconnected" &&
+          state !== "failed" &&
+          connectionState !== "failed"
+        ) {
+          console.debug("[MM][webrtc] auto reconnect aborted: recovered before retry", {
+            remoteUuid: user.uuid,
+            trigger,
+            iceConnectionState: state,
+            connectionState,
+          })
+          return
+        }
+    
+        reconnectAttemptRef.current += 1
+    
+        console.warn("[MM][webrtc] auto reconnect starting", {
+          remoteUuid: user.uuid,
+          name: user.name,
+          trigger,
+          attempt: reconnectAttemptRef.current,
+          iceConnectionState: state,
+          connectionState,
+        })
+    
+        try {
+          await startRTC(user.uuid, "auto-reconnect")
+        } catch (ex) {
+          console.warn("[MM][webrtc] auto reconnect start failed", {
+            remoteUuid: user.uuid,
+            name: user.name,
+            trigger,
+            attempt: reconnectAttemptRef.current,
+          }, ex)
+        }
+      }, delay)
+    }
+
+    
     const createPeer = () => {
+        clearReconnectTimer("creating a new peer")
+        
         const oldPeer = RTCPeerRef.current
         
         if (oldPeer && oldPeer.signalingState !== "closed") {
@@ -237,29 +389,64 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
 
 
         peer.oniceconnectionstatechange = () => {
-          if (RTCPeerRef.current !== peer || peer.signalingState === "closed") {
-            console.debug("[MM][webrtc] ignore ice state from old pc", {
+            if (RTCPeerRef.current !== peer || peer.signalingState === "closed") {
+              console.debug("[MM][webrtc] ignore ice state from old pc", {
+                remoteUuid: user.uuid,
+                iceConnectionState: peer.iceConnectionState,
+                connectionState: peer.connectionState,
+                signalingState: peer.signalingState,
+              })
+              return
+            }
+            
+            console.debug("[MM][webrtc] ice state", {
               remoteUuid: user.uuid,
               iceConnectionState: peer.iceConnectionState,
+              connectionState: peer.connectionState,
               signalingState: peer.signalingState,
             })
+            
+            if (peer.iceConnectionState === "connected") {
+              const attempts = reconnectAttemptRef.current
+            
+              clearReconnectTimer("ice connected")
+              reconnectAttemptRef.current = 0
+            
+              if (attempts > 0) {
+                console.info("[MM][webrtc] auto reconnect succeeded", {
+                  remoteUuid: user.uuid,
+                  name: user.name,
+                  attempts,
+                })
+              }
+            
+              return
+            }
+            
+            if (peer.iceConnectionState === "disconnected") {
+              scheduleAutoReconnect(peer, "ice-disconnected")
+              return
+            }
+            
+            if (peer.iceConnectionState === "failed") {
+              scheduleAutoReconnect(peer, "ice-failed")
+            }
+        }
+
+        peer.onconnectionstatechange = () => {
+          if (RTCPeerRef.current !== peer || peer.signalingState === "closed") {
             return
           }
         
-          console.debug("[MM][webrtc] ice state", {
+          console.debug("[MM][webrtc] connection state", {
             remoteUuid: user.uuid,
-            iceConnectionState: peer.iceConnectionState,
             connectionState: peer.connectionState,
+            iceConnectionState: peer.iceConnectionState,
             signalingState: peer.signalingState,
           })
         
-          if (peer.iceConnectionState === "failed") {
-            console.warn("[MM][webrtc] Ice Connection Failed", {
-              remoteUuid: user.uuid,
-              name: user.name,
-            })
-        
-            peer.restartIce()
+          if (peer.connectionState === "failed") {
+            scheduleAutoReconnect(peer, "connection-failed")
           }
         }
         
@@ -316,6 +503,14 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
             offer: RTCSessionDescription
         }
         if (data.uuid != user.uuid) return
+        
+        connectionWantedRef.current = true
+        wasOffererRef.current = false
+        
+        console.debug("[MM][webrtc] received offer; this side is answerer", {
+          remoteUuid: user.uuid,
+        })
+        
         await createAnswer(data.offer)
     }
     const onReceiveAnswer = async (token: string) => {
@@ -391,12 +586,17 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
         }, ex)
       }
     }
-    const closeRTC = () => {
+    const closeRTC = (reason: string = "intentional close") => {
+      connectionWantedRef.current = false
+      wasOffererRef.current = false
+      clearReconnectTimer(reason, true)
+    
       const peer = RTCPeerRef.current
     
       if (peer && peer.signalingState !== "closed") {
         console.debug("[MM][webrtc] closeRTC", {
           remoteUuid: user.uuid,
+          reason,
           signalingState: peer.signalingState,
           iceConnectionState: peer.iceConnectionState,
           connectionState: peer.connectionState,
@@ -411,8 +611,24 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
       pendingCandidatesRef.current = []
     }
 
-    const startRTC = async (uuid: string) => {
-        await createOffer(uuid)
+    const startRTC = async (
+      targetUuid: string,
+      source: "normal" | "auto-reconnect" = "normal",
+    ) => {
+      connectionWantedRef.current = true
+      wasOffererRef.current = true
+    
+      if (source === "normal") {
+        reconnectAttemptRef.current = 0
+      } else {
+        console.info("[MM][webrtc] auto reconnect creating offer", {
+          remoteUuid: targetUuid,
+          name: user.name,
+          attempt: reconnectAttemptRef.current,
+        })
+      }
+    
+      await createOffer(targetUuid)
     }
 
     const closeRTCStream = () => {
@@ -434,14 +650,14 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
         if (isInCall || userIsAdminMode) return
 
         // closeRTCStream()
-        closeRTC()
+        closeRTC("proximity disabled")
     }
 
     const onNewPlayerLeave = (token: string) => {
         const data = decrypt(token) as IOnlineUsers
         if (data.uuid != user.uuid || data.uuid == uuid) return
 
-        closeRTC()
+        closeRTC("remote player left")
     }
 
     const onPlayerInitAdminModeReceive = (token: string) => {
@@ -470,14 +686,14 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
         setUserIsAdminMode(false)
 
         // closeRTCStream()
-        closeRTC()
+        closeRTC("admin mode disabled")
     }
 
     const onPlayerLeaveReceivePlugin = (token: string) => {
         const data = decrypt(token) as IOnlineUsers
         if (data.uuid != user.uuid || data.uuid == uuid) return
 
-        closeRTC()
+        closeRTC("remote player left server")
     }
 
     const onPlayerChangeServer = (token: string) => {
@@ -489,7 +705,7 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
         if (data.uuid != user.uuid && data.uuid != uuid) return
         setUserIsAdminMode(false)
 
-        closeRTC()
+        closeRTC("player changed server")
     }
 
     const onSetVolumeReceive = (data: IVolume) => {
