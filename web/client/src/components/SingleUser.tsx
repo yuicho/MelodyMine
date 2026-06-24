@@ -58,6 +58,8 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
     const connectionWantedRef = useRef(false)
     const reconnectTimerRef = useRef<number | undefined>(undefined)
     const reconnectAttemptRef = useRef(0)
+    const isInCallRef = useRef(isInCall)
+    const userIsAdminModeRef = useRef(userIsAdminMode)
 
     const audioRef = useRef<HTMLAudioElement>(null)
 
@@ -655,12 +657,37 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
 
 
     const onDisableVoiceReceive = (token: string) => {
-        const onlineUser = decrypt(token) as IOnlineUsers
-        if (onlineUser.uuid != user.uuid) return
-        if (isInCall || userIsAdminMode) return
-
-        // closeRTCStream()
-        closeRTC("proximity disabled")
+      const onlineUser = decrypt(token) as IOnlineUsers
+      if (onlineUser.uuid != user.uuid) return
+    
+      const isInCallNow = isInCallRef.current
+      const userIsAdminModeNow = userIsAdminModeRef.current
+    
+      console.info("[MM][webrtc] proximity disable received", {
+        remoteUuid: user.uuid,
+        name: user.name,
+        isInCall: isInCallNow,
+        userIsAdminMode: userIsAdminModeNow,
+        wasOfferer: wasOffererRef.current,
+        connectionWanted: connectionWantedRef.current,
+      })
+    
+      if (isInCallNow || userIsAdminModeNow) {
+        console.info("[MM][webrtc] proximity disable ignored: special mode active", {
+          remoteUuid: user.uuid,
+          name: user.name,
+          isInCall: isInCallNow,
+          userIsAdminMode: userIsAdminModeNow,
+        })
+        return
+      }
+    
+      console.info("[MM][webrtc] proximity disable: closing peer", {
+        remoteUuid: user.uuid,
+        name: user.name,
+      })
+    
+      closeRTC("proximity disabled")
     }
 
     const onNewPlayerLeave = (token: string) => {
@@ -1049,6 +1076,14 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
             gain.gain.value = 1
         }
     }, [soundIsActive, isUserMute, user, voiceBack, uuid, gain])
+
+    useEffect(() => {
+      isInCallRef.current = isInCall
+    }, [isInCall])
+    
+    useEffect(() => {
+      userIsAdminModeRef.current = userIsAdminMode
+    }, [userIsAdminMode])
 
     return (
         <>
