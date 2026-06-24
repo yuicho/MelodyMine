@@ -229,11 +229,21 @@ const SingleUser = ({user}: { user: IOnlineUsers }) => {
           connectionState,
         })
     
+        const targetUuid = user.uuid
+        
+        if (!targetUuid) {
+          console.warn("[MM][webrtc] auto reconnect aborted: remote UUID missing", {
+            name: user.name,
+            trigger,
+          })
+          return
+        }
+        
         try {
-          await startRTC(user.uuid, "auto-reconnect")
+          await startRTC(targetUuid, "auto-reconnect")
         } catch (ex) {
           console.warn("[MM][webrtc] auto reconnect start failed", {
-            remoteUuid: user.uuid,
+            remoteUuid: targetUuid,
             name: user.name,
             trigger,
             attempt: reconnectAttemptRef.current,
