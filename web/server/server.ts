@@ -95,16 +95,84 @@ try {
                 }))
             })
 
-            socket.on("onDisableVoicePlugin", data => {
-                console.info("[MM][signal] onDisableVoicePlugin", {
-                    pluginSocketId: socket.id,
-                    data,
+            socket.on("onDisableVoicePlugin", async (data: {
+              uuid: string
+              server: string
+              socketID: string
+            }) => {
+              console.info("[MM][signal] onDisableVoicePlugin", {
+                pluginSocketId: socket.id,
+                data,
+              })
+            
+              // 従来どおり、target側へ「sourceとの接続を閉じる」と通知する
+              io.to(data.socketID).emit("onDisableVoiceReceive", encrypt({
+                uuid: data.uuid,
+              }))
+            
+              try {
+                const [source, target] = await Promise.all([
+                  prisma.melodymine.findUnique({
+                    where: { uuid: data.uuid },
+                    select: {
+                      socketID: true,
+                    },
+                  }),
+                  prisma.melodymine.findUnique({
+                    where: { socketID: data.socketID },
+                    select: {
+                      uuid: true,
+                    },
+                  }),
+                ])
+            
+                // source側のWebクライアントがいなければ、従来どおりtarget側だけ閉じる
+                if (!source?.socketID) {
+                  console.warn("[MM][signal] reverse disable skipped: source socket missing", {
+                    sourceUuid: data.uuid,
+                    targetSocketID: data.socketID,
+                  })
+                  return
+                }
+            
+                // targetのDB情報が取れなければ、source側へ送るべきUUIDが分からない
+                if (!target?.uuid) {
+                  console.warn("[MM][signal] reverse disable skipped: target UUID missing", {
+                    sourceUuid: data.uuid,
+                    targetSocketID: data.socketID,
+                  })
+                  return
+                }
+            
+                // 同一socketへの二重送信を避ける
+                if (source.socketID === data.socketID) {
+                  console.warn("[MM][signal] reverse disable skipped: same socket", {
+                    sourceUuid: data.uuid,
+                    socketID: data.socketID,
+                  })
+                  return
+                }
+            
+                console.info("[MM][signal] reverse proximity disable", {
+                  sourceUuid: data.uuid,
+                  sourceSocketID: source.socketID,
+                  targetUuid: target.uuid,
+                  targetSocketID: data.socketID,
                 })
-                io.to(data.socketID).emit("onDisableVoiceReceive", encrypt({
-                    uuid: data.uuid,
+            
+                // source側へ「targetとの接続を閉じる」と通知する
+                io.to(source.socketID).emit("onDisableVoiceReceive", encrypt({
+                  uuid: target.uuid,
                 }))
+              } catch (ex) {
+                console.error("[MM][signal] reverse disable lookup failed", {
+                  sourceUuid: data.uuid,
+                  targetSocketID: data.socketID,
+                  error: ex,
+                })
+              }
             })
-
+            
             socket.on("onSetVolumePlugin", data => {
                 io.to(data.socketID).emit("onSetVolumeReceive", {
                     uuid: data.uuid,
